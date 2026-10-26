@@ -121,7 +121,7 @@ widget-image-1.1.15 {
 npm start       # Dev server at http://localhost:8000/demo/
 npm run build   # Production build to dist/
 npm run types   # Regenerate TypeScript types from schema
-npm run release # Build, bump version, push, and tag
+just release-patch # release pull request; its merge publishes to npm
 ```
 
 ## License

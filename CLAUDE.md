@@ -11,7 +11,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `npm run watch`   | `vite build --watch`                                             |
 | `npm run types`   | Regenerate `src/definition-schema.d.ts` from `definition-schema.json` via `json2ts`. Run after every schema edit. |
 | `npm run link`    | Build + npm link, then link into `../RESWARM/frontend` for integration testing |
-| `npm run release` | `npm version patch`: preflight guards (on `main`, clean tree, not behind `origin/main`, generated files current, build passes) → bump + `dist/` rebuild (`version` hook, so the local build registers the new tag) → commit + bare-semver tag → `git push --follow-tags` → waits on the CI publish. Also `release:minor` / `release:major`. |
+| `just lint` | What the CI gate checks besides the build: regenerating the committed generated files changes nothing |
+| `just merge` / `just release-patch` | Pull requests into `main` from a feature branch with everything committed; the merge of a release pull request publishes to npm in CI (`build-publish.yml`), then the release GitHub App tags the bare version. Also `release-minor` / `release-major`. |
 
 No test runner or linter is configured. Node `>=24.9.0`, npm `>=10.0.2` (see `package.json` engines).
 
@@ -76,7 +77,7 @@ Theme files for local testing live in `demo/themes/`. The CSS custom property `-
 
 ## Platform registration (post-release)
 
-After `npm run release` and publish, register the new version with the IronFlock platform:
+After a release (`just release-patch`, published to npm on its merge), register the new version with the IronFlock platform:
 
 ```sql
 select swarm.f_update_widget_master('{"package_name": "widget-image", "version": "X.Y.Z"}'::jsonb);
