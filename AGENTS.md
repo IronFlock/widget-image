@@ -1,7 +1,142 @@
-# Development instructions
-
-Read `.ai/working-agreements.md` before editing.
+# widget-image development instructions
 
 Read `.github/copilot-instructions.md` for repository-specific development instructions.
 
-Follow the repository-specific guidance in `CLAUDE.md` and its referenced project documents.
+## Working agreements
+
+The organization maintains these agreements in the IronFlock `.github` repository at `.ai/working-agreements.md`.
+
+- Check the branch and working tree before editing. On main/master, create a
+  topic branch; otherwise keep the current branch. If another session owns
+  the branch or has uncommitted edits, ask where this work belongs before editing.
+  Do not create a worktree without explicit consent.
+- Preserve other sessions' changes. Re-read a file immediately before changing
+  it; do not overwrite a file that appeared after inspection.
+- Commit or push only when Marko explicitly requests it for this piece of work.
+  Do not amend, merge, rebase, tag, stash, or change remote settings implicitly.
+  Never add attribution trailers or generated-by notices to Git messages or PRs.
+- Production changes, releases, and registry pushes require explicit authorization
+  for the exact action. Do not hide production mutations in validation recipes.
+- Never print secret-file contents or copy credentials into project knowledge.
+  Do not describe private signing-key whereabouts in public documentation.
+- For code changes, add user-visible release notes for the version that will
+  actually ship them, preserving existing entries. Documentation-only setup,
+  tests, and invisible refactoring need no invented release-note entry.
+
+## Shared knowledge
+
+Store durable, verified project facts in the repository documentation; store task status and
+remaining work in `docs/handoff.md`. Include evidence paths and distinguish
+observations from assumptions. Shared files are reviewed repository content,
+not an automatic mirror of either agent's private memory or chat history.
+
+Skills live in `.agents/skills/`; `.claude/skills/` contains relative links to
+those same folders. Edit the canonical skill, not a duplicate. Tool permissions,
+credentials, hooks, and agent-specific runtime settings remain separate.
+
+Read the relevant repository documentation when starting work. When resuming work, read the relevant
+handoff and verify it against the current branch and files. Record checks
+and remaining work there when handing a task to another developer or agent.
+
+## Commands
+
+| Command           | Purpose                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| `npm start`       | Vite dev server at http://localhost:8000/demo/ (build + watch)   |
+| `npm run build`   | Production build to `dist/` (Vite lib mode, ES output)           |
+| `npm run watch`   | `vite build --watch`                                             |
+| `npm run types`   | Regenerate `src/definition-schema.d.ts` from `definition-schema.json` via `json2ts`. Run after every schema edit. |
+| `npm run link`    | Build + npm link, then link into `../RESWARM/frontend` for integration testing |
+| `just lint` | What the CI gate checks besides the build: regenerating the committed generated files changes nothing |
+| `just merge` / `just release-patch` | Pull requests into `main` from a feature branch with everything committed; the merge of a release pull request publishes to npm in CI (`build-publish.yml`), then the release GitHub App tags the bare version. Also `release-minor` / `release-major`. |
+
+No test runner or linter is configured. Node `>=24.9.0`, npm `>=10.0.2` (see `package.json` engines).
+
+## Architecture
+
+Single-component Lit 3.x web component published as `@ironflock/widget-image`. Part of the IronFlock multi-widget ecosystem (`widget-*` repos sharing identical patterns).
+
+**Entry point:** `src/widget-image.ts` (Vite lib entry, builds to `dist/widget-image.js`).
+
+### Version-tagged custom elements (critical)
+
+The component decorator uses a literal placeholder:
+
+```ts
+@customElement('widget-image-versionplaceholder')
+```
+
+`versionplaceholder` is replaced with `package.json#version` at build time by `@rollup/plugin-replace` configured in `vite.config.ts`. Consumers must use the version-suffixed tag (e.g. `<widget-image-1.1.18>`). The demo (`demo/index.html`) imports `package.json` and constructs the tag dynamically with `lit/static-html.js` — never hardcode a version anywhere.
+
+### Schema-driven configuration
+
+`src/definition-schema.json` is the source of truth for the widget's config UI. The IronFlock dashboard auto-generates a form from it, then sets `inputData` on the element. Custom (non-standard) JSON Schema extensions consumed by the dashboard:
+
+- `"type": "image"` — image upload picker
+- `"order": N` — field ordering
+- `"dataDrivenDisabled": true` — field cannot be data-bound from IoT sources
+- `"condition"` — conditional field visibility
+
+**Workflow:** edit `definition-schema.json` → run `npm run types` → `definition-schema.d.ts` is regenerated (do not edit by hand) → import generated `ImageConfiguration` type into `widget-image.ts`.
+
+### Universal widget API
+
+All IronFlock widgets expose the same three reactive properties:
+
+```ts
+@property({ type: Object }) inputData?: ImageConfiguration                            // from schema
+@property({ type: Object }) theme?: { theme_name: string; theme_object: any } // platform theme
+@property({ type: Object }) timeRange?: { start: number; end: number }       // Unix ms, for filtering
+```
+
+Theme files for local testing live in `demo/themes/`. The CSS custom property `--re-text-color` is honored, falling back to the theme object. These are not snapshotted: `registerTheme()` stores a `var(--re-…, <theme value>)` chain, so a change to the host property repaints the tile live without the widget being told. The widget paints no background of its own: studio's `widget-item` already paints `--re-tile-background-color` on the tile, and painting it again here composited a translucent tile colour twice.
+
+### Widget-specific logic
+
+- **Two modes** controlled by `inputData.multiImage`: single image (URL or upload) vs. grid built from `data[]`.
+- **Time filtering** (multi mode): `getFilteredImages()` filters `data[]` by `timestamp` against `timeRange`; entries without a timestamp are always shown.
+- **Responsive grid:** `ResizeObserver` triggers `updateGridLayout()` → `optimizeLayout()` finds optimal rows × cols by minimizing an error function, and scales gap proportionally.
+- **Theme:** `registerTheme()` extracts colors from the theme object.
+
+### Build pipeline
+
+`vite.config.ts`:
+
+- Lib mode, ES format only, entry `src/widget-image.ts`
+- `process.env.NODE_ENV` is forced to `'production'` (required for Lit optimization)
+- No externals — `lit` and `tslib` are bundled
+- License banner is injected into the rollup output
+
+### Demo harness
+
+`demo/index.html` mounts the component, randomizes values on a 1s interval via `ObjectRandomizer.js`, and uses an empty `keyPathsToRandomize` array. Populate it with paths like `'data.0.imageUrl'`, `'title'`, or `'multiImage'` to exercise specific fields during dev.
+
+## Platform registration (post-release)
+
+After a release (`just release-patch`, published to npm on its merge), register the new version with the IronFlock platform:
+
+```sql
+select swarm.f_update_widget_master('{"package_name": "widget-image", "version": "X.Y.Z"}'::jsonb);
+```
+
+## `aiSelection` in `src/definition-schema.json`
+
+The schema root carries an `aiSelection` block next to `title` and `description`. It is **not** JSON Schema and describes no config field — it exists so the IronFlock AI's Widget Builder can pick the right widget for a given shape of data, using knowledge only the widget author has:
+
+```jsonc
+"aiSelection": {
+  "dataShape": "…what columns this widget consumes and what each one means…",
+  "useWhen":   ["…a situation, naming the properties that express it…"],
+  "notFor":    ["…a situation this widget is wrong for, naming the widget to use instead…"]
+}
+```
+
+It is inert everywhere else, and must stay that way: `json2ts` ignores it (the generated `.d.ts` is byte-identical with and without it), the dashboard config editor renders only `schema.properties`, and the AI service's `validate_widget` validates *configs* against the schema, skipping unknown Draft-7 keywords.
+
+When maintaining it:
+
+- `notFor` is the high-value half and the part plain descriptions always omit. Every entry must name the widget that *should* be used, or it rejects without routing.
+- Write for an LLM with no other documentation: describe the visible result and the user's intent, not the implementation.
+- Prefer entries that discriminate against a *neighbouring* widget. Generic rejections are cheap; the ones that pay are those an author could plausibly get wrong.
+- The `notFor` lists are a set across all `widget-*` repos and are meant to be reciprocal — if this widget routes to another for some case, that widget should usually route back for the converse. Changing one side is a cue to check the other.
+- Update it whenever a property changes what this widget can *do*, not just how it looks.
