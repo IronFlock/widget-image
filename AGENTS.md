@@ -104,7 +104,7 @@ Theme files for local testing live in `demo/themes/`. The CSS custom property `-
 
 - Lib mode, ES format only, entry `src/widget-image.ts`
 - `process.env.NODE_ENV` is forced to `'production'` (required for Lit optimization)
-- No externals — `lit` and `tslib` are bundled
+- `lit` is external (studio's import map provides one copy for all widgets); `tslib` is bundled
 - License banner is injected into the rollup output
 
 ### Demo harness
